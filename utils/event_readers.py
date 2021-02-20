@@ -57,8 +57,11 @@ class FixedDurationEventReader:
         for i in range(1 + start_index):
             self.event_file.readline()
 
-        self.last_stamp = None
-        self.duration_s = duration_ms / 1000.0
+        self.next_stamp = None
+        self.last_window_dumped = False
+        # our event dataset uses ms
+        self.duration_ms = duration_ms
+        self.next_list = []
 
     def __iter__(self):
         return self
@@ -71,18 +74,27 @@ class FixedDurationEventReader:
 
     def __next__(self):
         with Timer('Reading event window from file'):
-            event_list = []
+            event_list = self.next_list
             for line in self.event_file:
                 if self.is_zip_file:
                     line = line.decode("utf-8")
                 t, x, y, pol = line.split(' ')
                 t, x, y, pol = float(t), int(x), int(y), int(pol)
-                event_list.append([t, x, y, pol])
-                if self.last_stamp is None:
-                    self.last_stamp = t
-                if t > self.last_stamp + self.duration_s:
-                    self.last_stamp = t
+                
+                if self.next_stamp is None:
+                    self.next_stamp = self.duration_ms
+                    
+                if t <= self.next_stamp: # belongs to this frame
+                    event_list.append([t, x, y, pol])
+                else: # belongs to the next frame
+                    self.next_list = [[t, x, y, pol]]
+                    self.next_stamp += self.duration_ms
                     event_window = np.array(event_list)
                     return event_window
 
-        raise StopIteration
+        if len(event_list) > 0 and not self.last_window_dumped:
+            event_window = np.array(event_list)
+            self.last_window_dumped = True
+            return event_window
+        else:
+            raise StopIteration
